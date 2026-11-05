@@ -1,3 +1,4 @@
+import { inspectEvidence } from '../memory/evidence';
 import { searchLibrary } from '../library/index';
 import { memoryHealth } from '../memory/health';
 import { recentReflections } from '../history/reflections';
@@ -63,6 +64,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   if (req.url === '/api/assistant/status') return json(res, 200, await assistantStatus());
   if (req.url === '/api/memory/revise') { await reviseMemory(data.id, data.text); return json(res, 200, {ok:true}); }
   if (req.url === '/api/memory/delete') { await deleteMemory(data.id); return json(res, 200, {ok:true}); }
+  if (req.url === '/api/memory/evidence') return json(res, 200, await inspectEvidence(databasePool(),data.id));
   if (req.url === '/api/memory/review') { await reviewMemory(data.id, data.decision); return json(res, 200, { ok: true }); }
   if (req.url === '/api/graph') return json(res, 200, await knowledgeGraph());
   if (req.url === '/api/chats') return json(res, 200, { chats: await conversations() });
