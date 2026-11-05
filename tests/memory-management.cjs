@@ -1,0 +1,6 @@
+const {test}=require('node:test'); const assert=require('node:assert/strict');
+const chat=require('../dist/chat/chat.js');let calls=[];
+chat.databasePool=()=>({connect:async()=>({release(){},query:async(sql,args)=>{calls.push({sql,args});if(sql.startsWith('SELECT t.subject'))return {rowCount:1,rows:[{subject:null,kind:'fact'}]};if(sql.startsWith('SELECT memory_id FROM memory_metadata WHERE memory_id'))return {rowCount:1,rows:[{memory_id:'1'}]};if(sql.startsWith('SELECT memory_id FROM memory_metadata WHERE normalized'))return {rowCount:0,rows:[]};if(sql.startsWith('INSERT INTO memories'))return {rowCount:1,rows:[{id:'2'}]};return {rows:[],rowCount:1}}}),query:async(sql,args)=>{calls.push({sql,args});return {rowCount:1,rows:[{id:'1'}]}}});
+const {reviseMemory,deleteMemory}=require('../dist/graph/graph.js');
+test('revision creates a new version and preserves a link',async()=>{calls=[];await reviseMemory('1','Новое название проекта');assert(calls.some(c=>c.sql.includes('исправленная версия')));assert(calls.some(c=>c.sql.includes("status='superseded'")));assert.equal(calls.at(-1).sql,'COMMIT');});
+test('rejects invalid input before deletion or revision',async()=>{await assert.rejects(reviseMemory('1','пароль: secret'));await assert.rejects(deleteMemory('../1'));calls=[];await deleteMemory('1');assert(calls[0].sql.startsWith('DELETE FROM memories'));});
