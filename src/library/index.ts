@@ -11,12 +11,11 @@ const secretName=/(?:^|[-_.])(secrets?|passwords?|credentials?|tokens?|keys?)(?:
 type Entry={name:string;depth:number};
 let root='',pending:Entry[]=[],nextCycle=0,active=false;
 function hashRoot(r:string):string{return createHash('sha256').update(r).digest('hex')}
-export function enabled():boolean{return process.env.HANAYORINA_LIBRARY_INDEX==='1'}
 function safeDirectory(base:string,name:string):string { let at=base; for(const part of name.split(/[\\/]/).filter(Boolean)){at=join(at,part);if(lstatSync(at).isSymbolicLink())throw new Error('Символические ссылки запрещены.');}const actual=realpathSync(at),rel=relative(base,actual);if(rel==='..'||rel.startsWith('..'+sep)||isAbsolute(rel))throw new Error('Путь за пределами рабочей папки.');return actual;}
 function validEntry(name:string):boolean{return !name.startsWith('.')&&!ignored.has(name.toLowerCase())&&!secretName.test(name)}
-/** Opt-in, bounded local scan: no network calls, no traversal through symlinks. */
+/** Bounded local scan: no network calls, no traversal through symlinks. */
 export async function indexLibraryStep(pool:Pool):Promise<void>{
- if(!enabled()||active)return;active=true;
+ if(active)return;active=true;
  try{
   const current=rootPath();if(current!==root){root=current;pending=[{name:'',depth:0}];nextCycle=0;}
   if(!pending.length){if(Date.now()<nextCycle)return;pending=[{name:'',depth:0}];}
@@ -51,7 +50,6 @@ export async function indexLibraryStep(pool:Pool):Promise<void>{
  }finally{active=false;}
 }
 export async function searchLibrary(pool:Pool,input:unknown){
- if(!enabled())throw new Error('Фоновая индексация не включена в .env.');
  if(typeof input!=='string'||input.trim().length<3||input.length>120)throw new Error('Введите от 3 до 120 символов.');
  const current=rootPath(),phrase=input.trim(),hash=hashRoot(current);
  const results=await pool.query(`SELECT path,size_bytes,mtime_ms FROM library_index WHERE root_hash=$1
