@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { databaseConfigured, prepareDatabase } from "./database";
 
 const host = "127.0.0.1";
 const port = 4173;
@@ -20,4 +21,19 @@ server.on("error", (error: NodeJS.ErrnoException) => {
   console.error(error.code === "EADDRINUSE" ? `Port ${port} is already in use. Close the other application and retry.` : error.message);
   process.exitCode = 1;
 });
-server.listen(port, host, () => console.log(`Hanayorina: http://${host}:${port}`));
+async function start(): Promise<void> {
+  if (databaseConfigured()) {
+    await prepareDatabase();
+    console.log("PostgreSQL connected; database schema is ready.");
+  } else {
+    console.log("PostgreSQL is not configured. See .env.example and README.md.");
+  }
+  server.listen(port, host, () => console.log(`Hanayorina: http://${host}:${port}`));
+}
+
+start().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : "Unknown database error";
+  console.error(`PostgreSQL connection or migration failed: ${message}`);
+  console.error("Check PostgreSQL and your local .env settings, then retry.");
+  process.exitCode = 1;
+});
