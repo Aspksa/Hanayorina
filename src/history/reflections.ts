@@ -23,8 +23,12 @@ export async function reflectOneConversation(pool: Pool): Promise<void> {
 }
 export async function recentReflections(pool: Pool) {
  const sessions=await pool.query(`SELECT c.id::text, left(c.title,80) AS title, r.reviewed_at,
-  r.last_message_id::text, (c.updated_at > r.reviewed_at) AS stale
+  r.last_message_id::text, (c.updated_at > r.reviewed_at) AS stale,
+  CASE WHEN a.last_message_id=r.last_message_id AND a.status='done' THEN a.summary ELSE NULL END AS model_summary,
+  CASE WHEN a.last_message_id=r.last_message_id AND a.status='done' THEN a.questions ELSE '[]'::jsonb END AS model_questions,
+  CASE WHEN a.last_message_id=r.last_message_id THEN a.status ELSE NULL END AS model_status
   FROM conversation_reflections r JOIN conversations c ON c.id=r.conversation_id
+  LEFT JOIN conversation_model_reviews a ON a.conversation_id=r.conversation_id
   ORDER BY r.reviewed_at DESC,c.id DESC LIMIT 10`);
  const ids:string[]=sessions.rows.map(r=>r.id);if(!ids.length)return {sessions:[]};
  const memories=await pool.query(`SELECT conversation_id::text, id::text,content,kind,status,message_id::text FROM (
