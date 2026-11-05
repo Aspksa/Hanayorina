@@ -1,0 +1,16 @@
+{
+  "name": "hanayorina",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hanayorina TypeScript starter",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "check": "tsc --noEmit"
+  },
+  "engines": { "node": ">=22" },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
