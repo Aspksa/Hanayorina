@@ -4,9 +4,9 @@
   "private": true,
   "description": "Hanayorina TypeScript starter",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/server.js",
-    "check": "tsc --noEmit"
+    "build": "tsc -p config/tsconfig.json",
+    "start": "node dist/server/index.js",
+    "check": "tsc -p config/tsconfig.json --noEmit"
   },
   "engines": {
     "node": ">=22"

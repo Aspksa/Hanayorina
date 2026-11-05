@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { databaseConfigured, prepareDatabase } from "./database";
+import { databaseConfigured, prepareDatabase } from "../database/postgres";
 
 const host = "127.0.0.1";
 const port = 4173;
@@ -26,7 +26,7 @@ async function start(): Promise<void> {
     await prepareDatabase();
     console.log("PostgreSQL connected; database schema is ready.");
   } else {
-    console.log("PostgreSQL is not configured. See .env.example and README.md.");
+    console.log("PostgreSQL is not configured. See config/.env.example and docs/setup.md.");
   }
   server.listen(port, host, () => console.log(`Hanayorina: http://${host}:${port}`));
 }
