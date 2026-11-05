@@ -8,9 +8,16 @@
     "start": "node dist/server.js",
     "check": "tsc --noEmit"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
     "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.9",
+    "pg": "^8.23.1"
   }
 }
