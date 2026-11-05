@@ -101,6 +101,47 @@ export async function prepareDatabase(): Promise<void> {
         `);
         await client.query("INSERT INTO hanayorina_migrations (version) VALUES ($1)", [2]);
       }
+      const v3 = await client.query("SELECT version FROM hanayorina_migrations WHERE version = $1", [3]);
+      if (v3.rowCount === 0) {
+        await client.query(`
+          CREATE TABLE memory_metadata (
+            memory_id bigint PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+            normalized text NOT NULL UNIQUE,
+            subject text,
+            status text NOT NULL CHECK(status IN ('reported','needs_review','confirmed','superseded','rejected')),
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+          CREATE INDEX memory_metadata_subject ON memory_metadata(subject) WHERE subject IS NOT NULL;
+          CREATE TABLE memory_evidence (
+            memory_id bigint NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            message_id bigint NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            conversation_id bigint NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY(memory_id, message_id)
+          );
+          CREATE TABLE memory_jobs (
+            message_id bigint PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+            conversation_id bigint NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','done','failed')),
+            attempts integer NOT NULL DEFAULT 0,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+          );
+          CREATE INDEX memory_jobs_pending ON memory_jobs(created_at) WHERE status = 'pending';
+        `);
+        await client.query("INSERT INTO hanayorina_migrations (version) VALUES ($1)", [3]);
+      }
+      const vectorAvailable = await client.query("SELECT to_regtype('vector') IS NOT NULL AS available");
+      if (vectorAvailable.rows[0].available) {
+        await client.query(`CREATE TABLE IF NOT EXISTS memory_embeddings (
+          memory_id bigint NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+          model text NOT NULL,
+          dimensions integer NOT NULL,
+          embedding vector NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY(memory_id, model)
+        )`);
+      }
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
