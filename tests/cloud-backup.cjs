@@ -24,10 +24,10 @@ test('backup remains separate and only runs on failure when enabled', async t =>
   result = await cloud.testWithBackup(); assert.equal(result.provider, 'cloud');
   assert.deepEqual(calls.map(c => c.auth), ['Bearer dummy-primary', 'Bearer dummy-cloud']);
   assert.equal(calls[1].url, 'https://foundation-models.api.cloud.ru/v1/models');
-  assert.deepEqual(cloud.cloudSettings(), { enabled: true, hasKey: true });
+  assert.deepEqual(cloud.cloudSettings(), { enabled: true, hasKey: true, model: '' });
   cloud.configureCloud(false, '', false); calls.length = 0;
   await assert.rejects(cloud.testWithBackup()); assert.equal(calls.length, 1);
   cloud.configureCloud(true, '', false); backupStatus = 401;
   await assert.rejects(cloud.testWithBackup(), /Основной сервис и Cloud.ru/);
-  cloud.configureCloud(false, '', true); assert.deepEqual(cloud.cloudSettings(), { enabled: false, hasKey: false });
+  cloud.configureCloud(false, '', true); assert.deepEqual(cloud.cloudSettings(), { enabled: false, hasKey: false, model: '' });
 });
