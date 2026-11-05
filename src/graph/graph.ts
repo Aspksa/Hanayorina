@@ -4,8 +4,12 @@ import { databasePool } from '../chat/chat';
 export async function knowledgeGraph() {
   const pool = databasePool();
   const memory = await pool.query(`
-    SELECT id::text, left(content, 2000) AS content, left(source, 500) AS source
-    FROM memories ORDER BY updated_at DESC, memories.id DESC LIMIT 121
+    SELECT m.id::text, left(m.content, 2000) AS content, left(m.source, 500) AS source,
+           COALESCE(t.status, 'legacy') AS status, e.conversation_id::text AS conversation_id,
+           e.message_id::text AS message_id, m.created_at, m.updated_at
+    FROM memories m LEFT JOIN memory_metadata t ON t.memory_id=m.id
+    LEFT JOIN LATERAL (SELECT conversation_id, message_id FROM memory_evidence WHERE memory_id=m.id ORDER BY created_at DESC, message_id DESC LIMIT 1) e ON true
+    ORDER BY m.updated_at DESC, m.id DESC LIMIT 121
   `);
   const nodes = memory.rows.slice(0, 120);
   if (!nodes.length) return { nodes: [], links: [], truncated: false };
@@ -18,4 +22,25 @@ export async function knowledgeGraph() {
     ORDER BY knowledge_links.id DESC LIMIT 351
   `, [ids]);
   return { nodes, links: relationships.rows.slice(0, 350), truncated: memory.rows.length > 120 || relationships.rows.length > 350 };
+}
+
+export async function reviewMemory(id: unknown, decision: unknown): Promise<void> {
+  if (typeof id !== 'string' || !/^[1-9][0-9]{0,17}$/.test(id) || !['confirmed','rejected'].includes(String(decision))) throw new Error('Некорректная отметка.');
+  const client = await databasePool().connect();
+  try {
+    await client.query('BEGIN');
+    const item = await client.query('SELECT subject FROM memory_metadata WHERE memory_id=$1', [id]);
+    if (!item.rowCount) throw new Error('Эту запись нельзя отметить.');
+    const subject: string | null = item.rows[0].subject;
+    if (subject) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 48713))', [subject]);
+    const locked = await client.query('SELECT memory_id FROM memory_metadata WHERE memory_id=$1 FOR UPDATE', [id]);
+    if (!locked.rowCount) throw new Error('Эту запись нельзя отметить.');
+    if (decision === 'confirmed' && subject) {
+      await client.query("UPDATE memory_metadata SET status='superseded' WHERE subject=$1 AND memory_id<>$2 AND status IN ('confirmed','reported','needs_review')", [subject,id]);
+    }
+    await client.query('UPDATE memory_metadata SET status=$1 WHERE memory_id=$2', [decision,id]);
+    await client.query('UPDATE memories SET updated_at=now() WHERE id=$1', [id]);
+    await client.query('COMMIT');
+  } catch (error) { try { await client.query('ROLLBACK'); } catch {} throw error; }
+  finally { client.release(); }
 }

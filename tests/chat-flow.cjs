@@ -18,6 +18,7 @@ class FakePool {
   if (sql.startsWith('INSERT INTO conversations')) { const row={id:String(chats.length+1),title:args[0]};chats.push(row);return {rows:[row]}; }
   if (sql.startsWith('SELECT id FROM conversations')) { const rows=chats.filter(x=>x.id===args[0]);return {rows,rowCount:rows.length}; }
   if (sql.startsWith('INSERT INTO messages')) { const row={id:String(messages.length+1),conversation_id:args[0],role:args[1],content:args[2],status:args[3]};messages.push(row);return {rows:[row]}; }
+  if (sql.startsWith('INSERT INTO memory_jobs')) return {rows:[]};
   if (sql.startsWith('INSERT INTO chat_requests')) { requests.push({request_id:args[0],conversation_id:args[1],assistant_message_id:args[2],status:args[3]});return {rows:[]}; }
   if (sql.startsWith('UPDATE messages SET content=$1, status=$2')) { const m=messages.find(x=>x.id===args[2]);m.content=args[0];m.status=args[1];return {rows:[]}; }
   if (sql.startsWith('UPDATE messages SET content=$1 WHERE')) { const m=messages.find(x=>x.id===args[1]);m.content=args[0];return {rows:[]}; }
