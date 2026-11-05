@@ -11,7 +11,7 @@ import { chatPage } from './chat-page';
 import { graphPage } from './graph-page';
 import { assistantPage } from './assistant-page';
 import { assistantStatus } from '../assistant/status';
-import { knowledgeGraph, reviewMemory } from '../graph/graph';
+import { knowledgeGraph, reviewMemory, reviseMemory, deleteMemory } from '../graph/graph';
 import { startMemoryWorker } from '../memory/worker';
 import { initChat, databasePool, conversations, messages, send } from '../chat/chat';
 import { cloudSettings, configureCloud, listCloudModels, selectCloudModel, testCloud, testWithBackup } from '../settings/cloud';
@@ -51,6 +51,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     return json(res, 200, {ok:true});
   }
   if (req.url === '/api/assistant/status') return json(res, 200, await assistantStatus());
+  if (req.url === '/api/memory/revise') { await reviseMemory(data.id, data.text); return json(res, 200, {ok:true}); }
+  if (req.url === '/api/memory/delete') { await deleteMemory(data.id); return json(res, 200, {ok:true}); }
   if (req.url === '/api/memory/review') { await reviewMemory(data.id, data.decision); return json(res, 200, { ok: true }); }
   if (req.url === '/api/graph') return json(res, 200, await knowledgeGraph());
   if (req.url === '/api/chats') return json(res, 200, { chats: await conversations() });
