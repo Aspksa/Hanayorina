@@ -1,5 +1,5 @@
 import { Pool, PoolClient } from 'pg';
-import { containsSensitive, extractCorrection, extractExplicit, topics } from './extract';
+import { containsSensitive, extractCorrection, extractDecision, extractExplicit, topics } from './extract';
 import { aiMemorySettings, runAiBatch } from './ai';
 import { embedNextMemory } from './search';
 
@@ -12,7 +12,7 @@ async function processOne(client: PoolClient): Promise<boolean> {
       WHERE j.status='pending' AND m.role='user' AND m.status='completed'
       ORDER BY j.created_at, j.message_id LIMIT 1 FOR UPDATE OF j SKIP LOCKED`);
     if (!job.rowCount) { await client.query('COMMIT'); return false; }
-    const row = job.rows[0], correction = extractCorrection(row.content), fact = correction || extractExplicit(row.content); messageId = row.message_id;
+    const row = job.rows[0], correction = extractCorrection(row.content), decision = extractDecision(row.content), fact = correction || decision || extractExplicit(row.content); messageId = row.message_id;
     if (fact) {
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 48712))', [fact.normalized]);
       const existing = await client.query('SELECT memory_id::text FROM memory_metadata WHERE normalized=$1', [fact.normalized]);
@@ -21,12 +21,11 @@ async function processOne(client: PoolClient): Promise<boolean> {
       else {
         if (fact.subject) await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 48713))', [fact.subject]);
         const conflicts = fact.subject ? await client.query("SELECT memory_id::text FROM memory_metadata WHERE subject=$1 AND status IN ('reported','confirmed','needs_review')", [fact.subject]) : { rows: [], rowCount: 0 };
-        const status = correction || conflicts.rowCount ? 'needs_review' : 'reported';
-        const inserted = await client.query('INSERT INTO memories(content,source) VALUES ($1,$2) RETURNING id::text', [fact.content, correction ? 'Исправление пользователя' : 'Сообщение пользователя']);
+        const status = correction || decision || conflicts.rowCount ? 'needs_review' : 'reported';
+        const inserted = await client.query('INSERT INTO memories(content,source) VALUES ($1,$2) RETURNING id::text', [fact.content, correction ? 'Исправление пользователя' : decision ? 'Решение пользователя' : 'Сообщение пользователя']);
         memoryId = inserted.rows[0].id;
-        await client.query('INSERT INTO memory_metadata(memory_id,normalized,subject,status,kind) VALUES ($1,$2,$3,$4,$5)', [memoryId,fact.normalized,fact.subject,status,correction ? 'correction' : 'fact']);
+        await client.query('INSERT INTO memory_metadata(memory_id,normalized,subject,status,kind) VALUES ($1,$2,$3,$4,$5)', [memoryId,fact.normalized,fact.subject,status,correction ? 'correction' : decision ? 'decision' : 'fact']);
         if (conflicts.rowCount) {
-          if (!correction) await client.query("UPDATE memory_metadata SET status='needs_review' WHERE subject=$1 AND memory_id<>$2 AND status IN ('reported','confirmed')", [fact.subject,memoryId]);
           for (const conflict of conflicts.rows) await client.query("INSERT INTO knowledge_links(from_memory_id,to_memory_id,relation) VALUES ($1,$2,'возможное противоречие') ON CONFLICT DO NOTHING", [conflict.memory_id,memoryId]);
         }
         const words = topics(fact.content);
