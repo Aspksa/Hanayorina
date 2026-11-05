@@ -18,22 +18,22 @@ const server = createServer((request, response) => {
   response.end(request.method === "HEAD" ? undefined : page);
 });
 server.on("error", (error: NodeJS.ErrnoException) => {
-  console.error(error.code === "EADDRINUSE" ? `Port ${port} is already in use. Close the other application and retry.` : error.message);
+  console.error(error.code === "EADDRINUSE" ? `Порт ${port} занят. Закройте другую программу и повторите запуск.` : error.message);
   process.exitCode = 1;
 });
 async function start(): Promise<void> {
   if (databaseConfigured()) {
     await prepareDatabase();
-    console.log("PostgreSQL connected; database schema is ready.");
+    console.log("PostgreSQL подключён; структура базы готова.");
   } else {
-    console.log("PostgreSQL is not configured. See config/.env.example and docs/setup.md.");
+    console.log("PostgreSQL не настроен. См. config/.env.example и docs/setup.md.");
   }
   server.listen(port, host, () => console.log(`Hanayorina: http://${host}:${port}`));
 }
 
 start().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : "Unknown database error";
-  console.error(`PostgreSQL connection or migration failed: ${message}`);
-  console.error("Check PostgreSQL and your local .env settings, then retry.");
+  console.error(`Ошибка подключения PostgreSQL или создания таблиц: ${message}`);
+  console.error("Проверьте PostgreSQL и локальные настройки .env, затем повторите запуск.");
   process.exitCode = 1;
 });
