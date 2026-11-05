@@ -45,7 +45,38 @@ export function addKey(name: unknown, secret: unknown): void {
 export function removeKey(id: unknown): void { if (typeof id !== 'string') throw new Error('Ключ не найден.'); const data = load(); data.keys = data.keys.filter(k => k.id !== id); if (data.activeId === id) data.activeId = data.keys[0]?.id || null; save(data); }
 export function selectKey(id: unknown): void { const data = load(); if (typeof id !== 'string' || !data.keys.some(k => k.id === id)) throw new Error('Ключ не найден.'); data.activeId = id; save(data); }
 
-// Retry only responses that can plausibly be specific to a credential.
+// A single GET retry is safe here; future generation requests need their own retry policy.
+function retryAfterMs(value: string | null, now = Date.now()): number | null {
+  if (!value) return null;
+  if (/^\d+$/.test(value.trim())) return Number(value.trim()) * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - now) : null;
+}
+async function checkKey(target: string, key: Key): Promise<number> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let response: Response;
+    try { response = await fetch(target, { headers: { Authorization: `Bearer ${key.secret}` }, redirect: 'manual', signal: AbortSignal.timeout(10000) }); }
+    catch { throw new Error('Не удалось связаться с сервером API. Проверьте адрес и интернет.'); }
+    const status = response.status;
+    const delay = status === 429 ? retryAfterMs(response.headers.get('retry-after')) : null;
+    await response.body?.cancel();
+    if (status === 429) {
+      if (attempt === 0 && delay !== null && delay <= 3000) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      const info = delay !== null ? ` Повторите не раньше чем через ${Math.ceil(delay / 1000)} сек.` : ' Повторите позже.';
+      throw new Error(`Слишком много запросов (429).${info} Ключ остаётся активным.`);
+    }
+    if ([502, 503, 504].includes(status)) {
+      if (attempt === 0) { await new Promise(resolve => setTimeout(resolve, 1000)); continue; }
+      throw new Error(`Сервис модели временно недоступен или не ответил (HTTP ${status}). Попробуйте позже; ключ остаётся активным.`);
+    }
+    if (status === 524) throw new Error('Соединение прервалось (524). Проверьте резервный адрес у поставщика; ключ остаётся активным.');
+    return status;
+  }
+  throw new Error('Проверка не завершена.');
+}
 export async function testConnection(): Promise<{ name: string; switched: boolean }> {
   const data = load(); if (!data.endpoint) throw new Error('Сначала укажите адрес API.');
   const ordered = [...data.keys]; const index = ordered.findIndex(k => k.id === data.activeId); if (index > 0) ordered.unshift(...ordered.splice(index, 1));
@@ -53,15 +84,12 @@ export async function testConnection(): Promise<{ name: string; switched: boolea
   const target = data.endpoint.endsWith('/models') ? data.endpoint : `${data.endpoint}/models`;
   const keys = data.autoSwitch ? ordered : ordered.slice(0, 1);
   for (const key of keys) {
-    let response: Response;
-    try { response = await fetch(target, { headers: { Authorization: `Bearer ${key.secret}` }, redirect: 'manual', signal: AbortSignal.timeout(10000) }); }
-    catch { throw new Error('Не удалось связаться с сервером API. Проверьте адрес и интернет.'); }
-    const status = response.status; await response.body?.cancel();
-    if (response.ok) {
+    const status = await checkKey(target, key);
+    if (status >= 200 && status < 300) {
       const latest = load(); if (!latest.keys.some(k => k.id === key.id) || latest.endpoint !== data.endpoint) throw new Error('Настройки изменились во время проверки; повторите её.');
       const switched = latest.activeId !== key.id; latest.activeId = key.id; save(latest); return { name: key.name, switched };
     }
-    if (![401, 403, 429].includes(status)) throw new Error(`Сервер вернул HTTP ${status}. Проверьте адрес и совместимость API.`);
+    if (![401, 402].includes(status)) throw new Error(`Сервер вернул HTTP ${status}. Проверьте адрес и совместимость API.`);
   }
-  throw new Error('Проверка не прошла: ключи отклонены или достигнут лимит.');
+  throw new Error('Проверка не прошла: ключи отклонены или лимит исчерпан (401/402).');
 }
