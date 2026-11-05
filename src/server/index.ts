@@ -1,8 +1,9 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { databaseConfigured, prepareDatabase } from '../database/postgres';
-import { addKey, configure, publicSettings, removeKey, selectKey, testConnection } from '../settings/keys';
+import { addKey, configure, publicSettings, removeKey, selectKey } from '../settings/keys';
 import { page } from './page';
+import { cloudSettings, configureCloud, testCloud, testWithBackup } from '../settings/cloud';
 
 const host = '127.0.0.1';
 const port = Number(process.env.HANAYORINA_PORT || 4173);
@@ -19,6 +20,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   if (req.headers.host !== expectedHost) return json(res, 403, { error: 'Недопустимый адрес.' });
   if (req.url === '/health' && req.method === 'GET' && process.env.HANAYORINA_HEALTH_TOKEN) return json(res, 200, { token: process.env.HANAYORINA_HEALTH_TOKEN });
   if (req.url === '/' && (req.method === 'GET' || req.method === 'HEAD')) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'" }); return res.end(req.method === 'HEAD' ? undefined : page(csrf)); }
+  if (req.url === '/api/cloud' && req.method === 'GET') return json(res, 200, cloudSettings());
   if (req.url === '/api/settings' && req.method === 'GET') return json(res, 200, publicSettings());
   if (req.method !== 'POST' || !req.url?.startsWith('/api/')) return json(res, 404, { error: 'Не найдено.' });
   if (req.headers.origin !== `http://${expectedHost}` || req.headers['x-hanayorina-token'] !== csrf || !req.headers['content-type']?.toLowerCase().startsWith('application/json')) return json(res, 403, { error: 'Запрос отклонён.' });
@@ -27,7 +29,9 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   else if (req.url === '/api/keys/add') addKey(data.name, data.secret);
   else if (req.url === '/api/keys/delete') removeKey(data.id);
   else if (req.url === '/api/keys/select') selectKey(data.id);
-  else if (req.url === '/api/test') return json(res, 200, await testConnection());
+  else if (req.url === '/api/cloud') configureCloud(data.enabled, data.secret, data.remove);
+  else if (req.url === '/api/cloud/test') { await testCloud(); return json(res, 200, { ok: true }); }
+  else if (req.url === '/api/test') return json(res, 200, await testWithBackup());
   else return json(res, 404, { error: 'Не найдено.' });
   return json(res, 200, { ok: true });
 }
