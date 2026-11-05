@@ -18,13 +18,13 @@ export async function initChat(): Promise<void> {
   } catch (error) { try { await client.query('ROLLBACK'); } catch {} client.release(); await next.end(); throw error; }
   client.release();
 }
-function db(): Pool { if (!pool) throw new Error('Для сохранения чатов настройте и запустите PostgreSQL. См. docs/setup.md.'); return pool; }
+export function databasePool(): Pool { if (!pool) throw new Error('Для работы с данными настройте и запустите PostgreSQL. См. docs/setup.md.'); return pool; }
 function id(value: unknown): string { if (typeof value !== 'string' || !/^[1-9][0-9]{0,17}$/.test(value)) throw new Error('Неверный идентификатор чата.'); return value; }
-export async function conversations() { return (await db().query('SELECT id::text, title, updated_at FROM conversations ORDER BY conversations.updated_at DESC, conversations.id DESC LIMIT 200')).rows; }
+export async function conversations() { return (await databasePool().query('SELECT id::text, title, updated_at FROM conversations ORDER BY conversations.updated_at DESC, conversations.id DESC LIMIT 200')).rows; }
 export async function messages(value: unknown, cursor?: unknown) {
   const chat = id(value); const before = cursor == null ? null : id(cursor);
-  const found = await db().query('SELECT id FROM conversations WHERE id=$1', [chat]); if (!found.rowCount) throw new Error('Чат не найден.');
-  const result = await db().query('SELECT id::text, role, content, status, created_at FROM messages WHERE conversation_id=$1 AND ($2::bigint IS NULL OR id < $2::bigint) ORDER BY messages.id DESC LIMIT 51', [chat, before]);
+  const found = await databasePool().query('SELECT id FROM conversations WHERE id=$1', [chat]); if (!found.rowCount) throw new Error('Чат не найден.');
+  const result = await databasePool().query('SELECT id::text, role, content, status, created_at FROM messages WHERE conversation_id=$1 AND ($2::bigint IS NULL OR id < $2::bigint) ORDER BY messages.id DESC LIMIT 51', [chat, before]);
   const hasMore = result.rows.length > 50;
   const rows = result.rows.slice(0, 50).reverse();
   return { messages: rows, hasMore, oldest: rows[0]?.id || null };
@@ -92,7 +92,7 @@ export async function send(value: unknown, input: unknown, emit: (e: Event) => v
   if (typeof requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw new Error('Некорректный идентификатор запроса.');
   const primary = loadKeys(); const cloud = cloudForRequest();
   if ((!primary.endpoint || !primary.model || !primary.keys.length) && (!cloud.enabled || !cloud.secret || !cloud.model)) throw new Error('Настройте адрес, ключ и модель AI STAR или резерв Cloud.ru.');
-  const connection: PoolClient = await db().connect(); let chat = value == null ? null : id(value); let locked = false; let assistant: string | null = null; let started = false; let inTransaction = false;
+  const connection: PoolClient = await databasePool().connect(); let chat = value == null ? null : id(value); let locked = false; let assistant: string | null = null; let started = false; let inTransaction = false;
   try {
     await connection.query('BEGIN'); inTransaction = true;
     // Serialise the same request across browser retries and across application instances.
