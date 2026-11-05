@@ -3,7 +3,7 @@ import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, extname, isAbsolute, join, relative, sep } from 'node:path';
 import { Pool } from 'pg';
 import { rootPath, readSafe, target } from '../tools/workspace';
-import { containsSensitive } from '../memory/extract';
+import { containsSensitive, topics } from '../memory/extract';
 
 const extensions=new Set(['.txt','.md','.csv','.json','.ts','.tsx','.js','.py','.html','.css','.yaml','.yml']);
 const ignored=new Set(['node_modules','dist','build','vendor','__pycache__','data','.runtime']);
@@ -49,12 +49,19 @@ export async function indexLibraryStep(pool:Pool):Promise<void>{
   if(!pending.length)nextCycle=Date.now()+300000;
  }finally{active=false;}
 }
+/** Local excerpts and topic hints are derived from text; they are not model-generated summaries. */
+export function describeDocument(content:string,query:string){
+ const lines=content.split(/\r?\n/);const needle=query.toLocaleLowerCase('ru');
+ const index=lines.findIndex(line=>line.toLocaleLowerCase('ru').includes(needle));
+ const line=index>=0?lines[index].trim().slice(0,300):'';
+ return {line:index>=0?index+1:null,excerpt:line,topics:topics(content).slice(0,5)};
+}
 export async function searchLibrary(pool:Pool,input:unknown){
  if(typeof input!=='string'||input.trim().length<3||input.length>120)throw new Error('Введите от 3 до 120 символов.');
  const current=rootPath(),phrase=input.trim(),hash=hashRoot(current);
- const results=await pool.query(`SELECT path,size_bytes,mtime_ms FROM library_index WHERE root_hash=$1
+ const results=await pool.query(`SELECT path,size_bytes,mtime_ms,content FROM library_index WHERE root_hash=$1
  AND (strpos(lower(path),lower($2))>0 OR strpos(lower(content),lower($2))>0) ORDER BY indexed_at DESC LIMIT 100`,[hash,phrase]);
  const matches=[];
- for(const row of results.rows){try{const path=target(current,row.path,false),st=lstatSync(path);if(st.isFile()&&st.size===Number(row.size_bytes)&&st.mtimeMs===Number(row.mtime_ms)){matches.push({path:row.path,title:basename(row.path)});if(matches.length===30)break}}catch{}}
+ for(const row of results.rows){try{const path=target(current,row.path,false),st=lstatSync(path);if(st.isFile()&&st.size===Number(row.size_bytes)&&st.mtimeMs===Number(row.mtime_ms)){matches.push({path:row.path,title:basename(row.path),...describeDocument(row.content,phrase)});if(matches.length===30)break}}catch{}}
  return {matches,limit:30};
 }
