@@ -1,3 +1,4 @@
+import { getPreferences, savePreferences } from '../persona/preferences';
 import { aiMemorySettings, setAiMemory } from '../memory/ai';
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -34,12 +35,14 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     catch { return json(res, 404, { error:'Аватар не найден.' }); }
   }
   if ((req.url === '/' || req.url?.startsWith('/?') || req.url === '/settings' || req.url === '/graph' || req.url === '/hanayorina') && (req.method === 'GET' || req.method === 'HEAD')) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'" }); return res.end(req.method === 'HEAD' ? undefined : req.url === '/settings' ? page(csrf) : req.url === '/graph' ? graphPage(csrf) : req.url === '/hanayorina' ? assistantPage(csrf) : chatPage(csrf)); }
+  if (req.url === '/api/personality' && req.method === 'GET') return json(res, 200, getPreferences());
   if (req.url === '/api/memory/ai' && req.method === 'GET') return json(res, 200, aiMemorySettings());
   if (req.url === '/api/cloud' && req.method === 'GET') return json(res, 200, cloudSettings());
   if (req.url === '/api/settings' && req.method === 'GET') return json(res, 200, publicSettings());
   if (req.method !== 'POST' || !req.url?.startsWith('/api/')) return json(res, 404, { error: 'Не найдено.' });
   if (req.headers.origin !== `http://${expectedHost}` || req.headers['x-hanayorina-token'] !== csrf || !req.headers['content-type']?.toLowerCase().startsWith('application/json')) return json(res, 403, { error: 'Запрос отклонён.' });
   const data = await body(req);
+  if (req.url === '/api/personality') { savePreferences(data); return json(res, 200, {ok:true}); }
   if (req.url === '/api/memory/ai') {
     if (typeof data.enabled !== 'boolean') throw new Error('Некорректные настройки памяти.');
     if (!data.enabled) setAiMemory(false);
