@@ -1,3 +1,4 @@
+import { indexLibraryStep } from '../library/index';
 import { backgroundAllowed } from './load';
 import { updateMemoryHealth } from './health';
 import { reflectOneConversation } from '../history/reflections';
@@ -55,6 +56,6 @@ export async function runMemoryBatch(pool: Pool, limit = 5): Promise<void> {
   finally { running = false; }
 }
 export function startMemoryWorker(pool: Pool): void {
-  const tick = () => { if (!backgroundAllowed()) return; void runMemoryBatch(pool).then(() => embedNextMemory(pool)).then(() => runAiBatch(pool)).then(() => reflectOneConversation(pool)).then(() => updateMemoryHealth(pool)).catch(() => console.error('Фоновая обработка памяти временно недоступна.')); };
+  const tick = () => { if (!backgroundAllowed()) return; void runMemoryBatch(pool).then(() => embedNextMemory(pool)).then(() => runAiBatch(pool)).then(() => reflectOneConversation(pool)).then(() => updateMemoryHealth(pool)).then(() => indexLibraryStep(pool)).catch(() => console.error('Фоновая обработка памяти временно недоступна.')); };
   setTimeout(tick, 3000).unref(); setInterval(tick, 15000).unref();
 }
