@@ -1,0 +1,33 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { mkdtempSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join, resolve } = require('node:path');
+const base = resolve('dist/settings');
+const temp = mkdtempSync(join(tmpdir(), 'hanayorina-cloud-'));
+process.chdir(temp);
+const keys = require(join(base, 'keys.js'));
+const cloud = require(join(base, 'cloud.js'));
+test('backup remains separate and only runs on failure when enabled', async t => {
+  const calls = []; let primaryStatus = 200; let backupStatus = 200;
+  const original = global.fetch;
+  global.fetch = async (url, options) => {
+    calls.push({ url, auth: options.headers.Authorization });
+    return new Response('{}', { status: url.includes('cloud.ru') ? backupStatus : primaryStatus });
+  };
+  t.after(() => { global.fetch = original; rmSync(temp, { recursive: true, force: true }); });
+  keys.configure('https://example.test/v1', true); keys.addKey('primary', 'dummy-primary');
+  cloud.configureCloud(true, 'dummy-cloud', false);
+  let result = await cloud.testWithBackup();
+  assert.equal(result.provider, 'primary'); assert.equal(calls.length, 1);
+  primaryStatus = 401; calls.length = 0;
+  result = await cloud.testWithBackup(); assert.equal(result.provider, 'cloud');
+  assert.deepEqual(calls.map(c => c.auth), ['Bearer dummy-primary', 'Bearer dummy-cloud']);
+  assert.equal(calls[1].url, 'https://foundation-models.api.cloud.ru/v1/models');
+  assert.deepEqual(cloud.cloudSettings(), { enabled: true, hasKey: true });
+  cloud.configureCloud(false, '', false); calls.length = 0;
+  await assert.rejects(cloud.testWithBackup()); assert.equal(calls.length, 1);
+  cloud.configureCloud(true, '', false); backupStatus = 401;
+  await assert.rejects(cloud.testWithBackup(), /Основной сервис и Cloud.ru/);
+  cloud.configureCloud(false, '', true); assert.deepEqual(cloud.cloudSettings(), { enabled: false, hasKey: false });
+});
