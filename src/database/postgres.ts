@@ -149,6 +149,15 @@ export async function prepareDatabase(): Promise<void> {
         `);
         await client.query("INSERT INTO hanayorina_migrations(version) VALUES ($1)", [4]);
       }
+      const v5 = await client.query("SELECT version FROM hanayorina_migrations WHERE version = $1", [5]);
+      if (v5.rowCount === 0) {
+        await client.query(`CREATE TABLE conversation_reflections (
+          conversation_id bigint PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+          last_message_id bigint NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          reviewed_at timestamptz NOT NULL DEFAULT now()
+        )`);
+        await client.query("INSERT INTO hanayorina_migrations(version) VALUES ($1)", [5]);
+      }
       const vectorAvailable = await client.query("SELECT to_regtype('vector') IS NOT NULL AS available");
       if (vectorAvailable.rows[0].available) {
         await client.query(`CREATE TABLE IF NOT EXISTS memory_embeddings (
