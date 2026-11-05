@@ -1,3 +1,5 @@
+import { recentReflections } from '../history/reflections';
+import { evaluateMemory } from '../history/evaluate';
 import { personalHistory } from '../history/history';
 import { getPreferences, savePreferences } from '../persona/preferences';
 import { aiMemorySettings, setAiMemory } from '../memory/ai';
@@ -51,6 +53,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (data.enabled) setAiMemory(true);
     return json(res, 200, {ok:true});
   }
+  if (req.url === '/api/reflections') return json(res, 200, await recentReflections(databasePool()));
+  if (req.url === '/api/memory/evaluate') return json(res, 200, evaluateMemory());
   if (req.url === '/api/history') return json(res, 200, await personalHistory(databasePool()));
   if (req.url === '/api/assistant/status') return json(res, 200, await assistantStatus());
   if (req.url === '/api/memory/revise') { await reviseMemory(data.id, data.text); return json(res, 200, {ok:true}); }
