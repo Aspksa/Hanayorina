@@ -1,3 +1,4 @@
+import { memoryHealth } from '../memory/health';
 import { recentReflections } from '../history/reflections';
 import { evaluateMemory } from '../history/evaluate';
 import { personalHistory } from '../history/history';
@@ -53,6 +54,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (data.enabled) setAiMemory(true);
     return json(res, 200, {ok:true});
   }
+  if (req.url === '/api/memory/health') { databasePool(); return json(res, 200, memoryHealth()); }
   if (req.url === '/api/reflections') return json(res, 200, await recentReflections(databasePool()));
   if (req.url === '/api/memory/evaluate') return json(res, 200, evaluateMemory());
   if (req.url === '/api/history') return json(res, 200, await personalHistory(databasePool()));
