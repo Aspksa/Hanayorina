@@ -8,11 +8,14 @@ where npm.cmd >nul 2>&1
 if errorlevel 1 goto missing_node
 node -e "if (+process.versions.node.split('.')[0] ^< 22) process.exit(1)"
 if errorlevel 1 goto old_node
-if not exist "node_modules\typescript\bin\tsc" (
+if not exist "node_modules\typescript\bin\tsc" goto install
+if not exist "node_modules\pg\package.json" goto install
+goto build
+:install
   echo Installing dependencies. Internet connection is required...
   call npm.cmd ci --no-audit --no-fund
   if errorlevel 1 goto install_error
-)
+:build
 echo Building Hanayorina...
 call npm.cmd run build
 if errorlevel 1 goto build_error
