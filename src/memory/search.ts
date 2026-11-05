@@ -60,11 +60,13 @@ export async function relevantMemories(pool: Pool, text: string): Promise<Memory
       }
     }
   } catch { /* Семантический поиск недоступен, оставляем локальный поиск по словам. */ }
-  if (!terms.length) return semantic;
+  // Confirmed corrections are small, user-approved guidance even when the next question uses different words.
+  const corrections = await pool.query("SELECT m.id::text, left(m.content,500) AS content, t.status FROM memories m JOIN memory_metadata t ON t.memory_id=m.id WHERE t.kind='correction' AND t.status='confirmed' ORDER BY m.updated_at DESC, m.id DESC LIMIT 2");
+  if (!terms.length) return [...corrections.rows, ...semantic].filter((item, i, all) => all.findIndex(other => other.id === item.id) === i).slice(0, 5);
   const lexical = await pool.query(`SELECT m.id::text, left(m.content,500) AS content, t.status
     FROM memories m JOIN memory_metadata t ON t.memory_id=m.id
     WHERE t.status IN ('reported','confirmed') AND EXISTS (SELECT 1 FROM unnest($1::text[]) AS q(term) WHERE m.content ILIKE '%' || q.term || '%')
     ORDER BY m.updated_at DESC, m.id DESC LIMIT 5`, [terms]);
-  const result = new Map<string,Memory>(); for (const item of [...semantic,...lexical.rows]) result.set(item.id,item);
+  const result = new Map<string,Memory>(); for (const item of [...corrections.rows,...semantic,...lexical.rows]) result.set(item.id,item);
   return [...result.values()].slice(0,5);
 }
