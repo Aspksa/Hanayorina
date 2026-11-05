@@ -1,10 +1,11 @@
+export function containsSensitive(text: string): boolean { return /(?:sk-[a-z0-9-]{12,}|bearer\s+\S+|парол[ьяеей]+|api[ _-]?key|секретн|secret|authorization|токен\s*[:=])/i.test(text); }
 export type Fact = { content: string; normalized: string; subject: string | null };
 export function extractExplicit(text: string): Fact | null {
   const match = text.trim().match(/^(?:пожалуйста[, ]+)?запомни(?:те)?[,:! ]+(?:что[ ,]+)?([\s\S]+)$/i);
   const plain = text.trim();
   if (!match && !/^(?:меня зовут\s+|я предпочитаю\s+|мой проект называется\s+)/i.test(plain)) return null;
   const content = (match ? match[1] : plain).trim().replace(/\s+/g, ' ').slice(0, 1000);
-  if (content.length < 4 || /(?:sk-[a-z0-9-]{12,}|bearer\s+\S+|пароль\s*[:=]|api[ _-]?key\s*[:=])/i.test(content)) return null;
+  if (content.length < 4 || containsSensitive(content)) return null;
   const normalized = content.toLocaleLowerCase('ru').replace(/ё/g, 'е').replace(/[.!?]+$/, '').replace(/\s+/g, ' ').trim();
   let subject: string | null = null;
   if (/^меня зовут\s+/i.test(content)) subject = 'user.name';
