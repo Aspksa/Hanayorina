@@ -1,0 +1,30 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { mkdtempSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join, resolve } = require('node:path');
+const modulePath = resolve('dist/settings/cloud.js');
+const temp = mkdtempSync(join(tmpdir(), 'hanayorina-models-'));
+process.chdir(temp);
+const cloud = require(modulePath);
+test('loads and saves only actual DeepSeek IDs, invalidating cache when key changes', async t => {
+ const original = global.fetch;
+ t.after(() => { global.fetch = original; rmSync(temp, { recursive: true, force: true }); });
+ let calls = 0;
+ global.fetch = async (url, options) => {
+  calls++; assert.equal(url, 'https://foundation-models.api.cloud.ru/v1/models');
+  assert.match(options.headers.Authorization, /^Bearer dummy-/);
+  return new Response(JSON.stringify({data:[{id:'deepseek-ai/DeepSeek-V4-Pro'},{id:'deepseek/deepseek-v3.2'},{id:'google/gemini'},{id:'vendor/notdeepseek-pretend'},{id:'deepseek-ai/DeepSeek-V4-Pro'}]}),{status:200});
+ };
+ cloud.configureCloud(false,'dummy-first',false);
+ const ids = await cloud.listCloudModels();
+ assert.deepEqual(ids, ['deepseek-ai/DeepSeek-V4-Pro','deepseek/deepseek-v3.2']);
+ assert.throws(() => cloud.selectCloudModel('google/gemini'));
+ cloud.selectCloudModel(ids[0]); assert.equal(cloud.cloudSettings().model, ids[0]);
+ assert.equal(calls,1); cloud.configureCloud(false,'dummy-second',false);
+ assert.equal(cloud.cloudSettings().model,'');
+ assert.throws(() => cloud.selectCloudModel(ids[0]));
+ global.fetch = async () => new Response('{}',{status:401});
+ await assert.rejects(cloud.listCloudModels(),/401/);
+ assert.equal(cloud.cloudSettings().hasKey,true);
+});
