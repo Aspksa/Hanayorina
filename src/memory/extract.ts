@@ -23,3 +23,9 @@ export function extractCorrection(text: string): Fact | null {
   if (!match) return null;
   return extractExplicit('Запомни: ' + match[1]);
 }
+
+/** Explicit decisions are local proposals until reviewed. */
+export function extractDecision(text: string): Fact | null {
+  const match = text.trim().match(/^(?:решение|решили)\s*[:：]\s*([\s\S]+)$/i);
+  return match ? extractExplicit('Запомни: ' + match[1]) : null;
+}
