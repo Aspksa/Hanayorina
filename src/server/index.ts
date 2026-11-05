@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { databaseConfigured, prepareDatabase } from '../database/postgres';
 import { addKey, configure, publicSettings, removeKey, selectKey } from '../settings/keys';
 import { page } from './page';
-import { cloudSettings, configureCloud, testCloud, testWithBackup } from '../settings/cloud';
+import { cloudSettings, configureCloud, listCloudModels, selectCloudModel, testCloud, testWithBackup } from '../settings/cloud';
 
 const host = '127.0.0.1';
 const port = Number(process.env.HANAYORINA_PORT || 4173);
@@ -30,6 +30,8 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   else if (req.url === '/api/keys/delete') removeKey(data.id);
   else if (req.url === '/api/keys/select') selectKey(data.id);
   else if (req.url === '/api/cloud') configureCloud(data.enabled, data.secret, data.remove);
+  else if (req.url === '/api/cloud/models') return json(res, 200, { models: await listCloudModels() });
+  else if (req.url === '/api/cloud/model') selectCloudModel(data.model);
   else if (req.url === '/api/cloud/test') { await testCloud(); return json(res, 200, { ok: true }); }
   else if (req.url === '/api/test') return json(res, 200, await testWithBackup());
   else return json(res, 404, { error: 'Не найдено.' });
