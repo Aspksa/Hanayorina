@@ -1,3 +1,4 @@
+import { extractExplicit } from '../memory/extract';
 import { databasePool } from '../chat/chat';
 
 // Bound the graph to keep rendering and response sizes predictable on modest hardware.
@@ -43,4 +44,45 @@ export async function reviewMemory(id: unknown, decision: unknown): Promise<void
     await client.query('COMMIT');
   } catch (error) { try { await client.query('ROLLBACK'); } catch {} throw error; }
   finally { client.release(); }
+}
+
+function memoryId(value: unknown): string {
+  if (typeof value !== 'string' || !/^[1-9][0-9]{0,17}$/.test(value)) throw new Error('Неверный идентификатор записи.');
+  return value;
+}
+/** User-initiated edit creates a new version and keeps the previous source intact. */
+export async function reviseMemory(value: unknown, text: unknown): Promise<void> {
+  const id=memoryId(value);
+  if(typeof text!=='string' || text.trim().length<4 || text.length>1000) throw new Error('Текст должен содержать от 4 до 1000 символов.');
+  const fact=extractExplicit('Запомни: '+text);
+  if(!fact) throw new Error('Проверьте текст: секреты и пароли не сохраняются в память.');
+  const client=await databasePool().connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 48712))',[fact.normalized]);
+    const item=await client.query('SELECT t.subject,t.kind FROM memory_metadata t WHERE t.memory_id=$1',[id]);
+    if(!item.rowCount) throw new Error('Запись не найдена или недоступна для изменения.');
+    const subject:string|null=item.rows[0].subject;
+    if(subject)await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 48713))',[subject]);
+    if(subject && fact.subject!==subject)throw new Error('Сохраните тему записи при изменении.');
+    const locked=await client.query('SELECT memory_id FROM memory_metadata WHERE memory_id=$1 FOR UPDATE',[id]);
+    if(!locked.rowCount)throw new Error('Запись не найдена.');
+    const existing=await client.query('SELECT memory_id FROM memory_metadata WHERE normalized=$1',[fact.normalized]);
+    if(existing.rowCount)throw new Error('Такая запись уже существует.');
+    const created=await client.query("INSERT INTO memories(content,source) VALUES($1,'Исправлено пользователем') RETURNING id::text",[fact.content]);
+    const next=created.rows[0].id;
+    await client.query("INSERT INTO memory_metadata(memory_id,normalized,subject,status,kind) VALUES($1,$2,$3,'confirmed',$4)",[next,fact.normalized,subject,item.rows[0].kind]);
+    if(subject) await client.query("UPDATE memory_metadata SET status='superseded' WHERE subject=$1 AND memory_id<>$2 AND status IN ('confirmed','reported','needs_review')",[subject,next]);
+    else await client.query("UPDATE memory_metadata SET status='superseded' WHERE memory_id=$1",[id]);
+    await client.query('UPDATE memories SET updated_at=now() WHERE id=$1',[id]);
+    await client.query("INSERT INTO knowledge_links(from_memory_id,to_memory_id,relation) VALUES($1,$2,'исправленная версия')",[id,next]);
+    await client.query('COMMIT');
+  } catch(error) {try{await client.query('ROLLBACK')}catch{} throw error;}
+  finally {client.release();}
+}
+/** Deletion is explicitly triggered by the user in the graph. */
+export async function deleteMemory(value: unknown): Promise<void> {
+  const id=memoryId(value);
+  const result=await databasePool().query('DELETE FROM memories WHERE id=$1 RETURNING id',[id]);
+  if(!result.rowCount)throw new Error('Запись не найдена.');
 }
