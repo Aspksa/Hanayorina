@@ -1,3 +1,4 @@
+import { personalHistory } from '../history/history';
 import { getPreferences, savePreferences } from '../persona/preferences';
 import { aiMemorySettings, setAiMemory } from '../memory/ai';
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
@@ -50,6 +51,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (data.enabled) setAiMemory(true);
     return json(res, 200, {ok:true});
   }
+  if (req.url === '/api/history') return json(res, 200, await personalHistory(databasePool()));
   if (req.url === '/api/assistant/status') return json(res, 200, await assistantStatus());
   if (req.url === '/api/memory/revise') { await reviseMemory(data.id, data.text); return json(res, 200, {ok:true}); }
   if (req.url === '/api/memory/delete') { await deleteMemory(data.id); return json(res, 200, {ok:true}); }
