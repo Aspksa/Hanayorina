@@ -1,6 +1,7 @@
 import { databasePool } from '../chat/chat';
 import { publicSettings } from '../settings/keys';
 import { cloudSettings } from '../settings/cloud';
+import { assistantCapabilities } from './capabilities';
 
 export async function assistantStatus() {
   const primary = publicSettings();
@@ -16,8 +17,8 @@ export async function assistantStatus() {
       (SELECT count(*)::int FROM knowledge_links) AS links,
       (SELECT count(*)::int FROM memory_jobs WHERE status='pending') AS pending,
       (SELECT count(*)::int FROM memory_jobs WHERE status='failed') AS failed`);
-    return { database: true, services, counts: result.rows[0] };
+    return { database: true, services, counts: result.rows[0], capabilities: assistantCapabilities(true, services.primary || services.cloud) };
   } catch {
-    return { database: false, services, counts: null };
+    return { database: false, services, counts: null, capabilities: assistantCapabilities(false, services.primary || services.cloud) };
   }
 }
