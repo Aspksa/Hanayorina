@@ -30,13 +30,15 @@ export async function recentReflections(pool: Pool) {
  const memories=await pool.query(`SELECT conversation_id::text, id::text,content,kind,status,message_id::text FROM (
    SELECT e.conversation_id,m.id,left(m.content,500) AS content,t.kind,t.status,e.message_id,
     row_number() OVER(PARTITION BY e.conversation_id ORDER BY e.message_id DESC,m.id DESC) AS n
-   FROM memory_evidence e JOIN memories m ON m.id=e.memory_id
+   FROM memory_evidence e JOIN conversation_reflections r ON r.conversation_id=e.conversation_id AND e.message_id<=r.last_message_id
+   JOIN memories m ON m.id=e.memory_id
    JOIN memory_metadata t ON t.memory_id=m.id
    WHERE e.conversation_id=ANY($1::bigint[]) AND t.status IN ('confirmed','reported','needs_review')
   ) items WHERE n<=10 ORDER BY conversation_id,n`,[ids]);
  const questions=await pool.query(`SELECT conversation_id::text,id::text,left(content,500) AS content FROM (
    SELECT conversation_id,id,content,row_number() OVER(PARTITION BY conversation_id ORDER BY id DESC) AS n
    FROM messages WHERE conversation_id=ANY($1::bigint[]) AND role='user' AND status='completed' AND content LIKE '%?%'
+   AND id <= (SELECT r.last_message_id FROM conversation_reflections r WHERE r.conversation_id=messages.conversation_id)
   ) q WHERE n<=3 ORDER BY id DESC`,[ids]);
  return {sessions:sessions.rows.map(session=>({...session,
    memories:memories.rows.filter(m=>m.conversation_id===session.id).slice(0,10),
