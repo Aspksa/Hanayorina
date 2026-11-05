@@ -1,15 +1,22 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+if errorlevel 1 goto folder_error
+if not exist "package.json" goto files_missing
+if not exist "package-lock.json" goto files_missing
+if not exist "config\tsconfig.json" goto files_missing
 title Hanayorina
 where node >nul 2>&1
 if errorlevel 1 goto missing_node
 where npm.cmd >nul 2>&1
 if errorlevel 1 goto missing_node
-node -e "if (+process.versions.node.split('.')[0] ^< 22) process.exit(1)"
+node -e "process.exit(Number(process.versions.node.split('.')[0]) >= 22 ? 0 : 1)"
 if errorlevel 1 goto old_node
 if not exist "node_modules\typescript\bin\tsc" goto install
 if not exist "node_modules\pg\package.json" goto install
+if not exist "node_modules\dotenv\package.json" goto install
+if not exist "node_modules\@types\node\package.json" goto install
+if not exist "node_modules\@types\pg\package.json" goto install
 goto build
 :install
   echo Installing dependencies. Internet connection is required...
@@ -24,6 +31,12 @@ echo Keep this window open. Press Ctrl+C to stop.
 call npm.cmd start
 if errorlevel 1 goto run_error
 goto done
+:folder_error
+echo Could not open the project folder. Extract the archive fully and retry.
+goto fail
+:files_missing
+echo Project files are missing. Extract the whole project ZIP before running this file.
+goto fail
 :missing_node
 echo Node.js and npm were not found. Install Node.js 22 or newer from https://nodejs.org/ and reopen this file.
 goto fail
