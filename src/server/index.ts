@@ -4,6 +4,8 @@ import { databaseConfigured, prepareDatabase } from '../database/postgres';
 import { addKey, configure, publicSettings, removeKey, selectKey, listPrimaryModels, selectPrimaryModel } from '../settings/keys';
 import { page } from './page';
 import { chatPage } from './chat-page';
+import { graphPage } from './graph-page';
+import { knowledgeGraph } from '../graph/graph';
 import { initChat, conversations, messages, send } from '../chat/chat';
 import { cloudSettings, configureCloud, listCloudModels, selectCloudModel, testCloud, testWithBackup } from '../settings/cloud';
 
@@ -21,12 +23,13 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   const expectedHost = `127.0.0.1:${port}`;
   if (req.headers.host !== expectedHost) return json(res, 403, { error: 'Недопустимый адрес.' });
   if (req.url === '/health' && req.method === 'GET' && process.env.HANAYORINA_HEALTH_TOKEN) return json(res, 200, { token: process.env.HANAYORINA_HEALTH_TOKEN });
-  if ((req.url === '/' || req.url === '/settings') && (req.method === 'GET' || req.method === 'HEAD')) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'" }); return res.end(req.method === 'HEAD' ? undefined : req.url === '/settings' ? page(csrf) : chatPage(csrf)); }
+  if ((req.url === '/' || req.url === '/settings' || req.url === '/graph') && (req.method === 'GET' || req.method === 'HEAD')) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'" }); return res.end(req.method === 'HEAD' ? undefined : req.url === '/settings' ? page(csrf) : req.url === '/graph' ? graphPage(csrf) : chatPage(csrf)); }
   if (req.url === '/api/cloud' && req.method === 'GET') return json(res, 200, cloudSettings());
   if (req.url === '/api/settings' && req.method === 'GET') return json(res, 200, publicSettings());
   if (req.method !== 'POST' || !req.url?.startsWith('/api/')) return json(res, 404, { error: 'Не найдено.' });
   if (req.headers.origin !== `http://${expectedHost}` || req.headers['x-hanayorina-token'] !== csrf || !req.headers['content-type']?.toLowerCase().startsWith('application/json')) return json(res, 403, { error: 'Запрос отклонён.' });
   const data = await body(req);
+  if (req.url === '/api/graph') return json(res, 200, await knowledgeGraph());
   if (req.url === '/api/chats') return json(res, 200, { chats: await conversations() });
   if (req.url === '/api/messages') return json(res, 200, await messages(data.id, data.before));
   if (req.url === '/api/chat') {
