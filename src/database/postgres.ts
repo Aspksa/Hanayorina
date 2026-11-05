@@ -158,6 +158,14 @@ export async function prepareDatabase(): Promise<void> {
         )`);
         await client.query("INSERT INTO hanayorina_migrations(version) VALUES ($1)", [5]);
       }
+      const v6 = await client.query("SELECT version FROM hanayorina_migrations WHERE version = $1", [6]);
+      if (v6.rowCount === 0) {
+        await client.query(`CREATE TABLE library_index (
+          root_hash text NOT NULL, path text NOT NULL, size_bytes bigint NOT NULL, mtime_ms double precision NOT NULL,
+          content text NOT NULL, indexed_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(root_hash,path)
+        )`);
+        await client.query("INSERT INTO hanayorina_migrations(version) VALUES ($1)",[6]);
+      }
       const vectorAvailable = await client.query("SELECT to_regtype('vector') IS NOT NULL AS available");
       if (vectorAvailable.rows[0].available) {
         await client.query(`CREATE TABLE IF NOT EXISTS memory_embeddings (
