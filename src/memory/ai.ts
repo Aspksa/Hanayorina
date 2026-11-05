@@ -8,7 +8,7 @@ import { containsSensitive, extractExplicit } from './extract';
 const folder = join(process.cwd(), 'data'), file = join(folder, 'memory-ai.json');
 export function aiMemorySettings(): {enabled: boolean} {
   try { const data: unknown=JSON.parse(readFileSync(file,'utf8')); if (!data || typeof data !== 'object' || typeof (data as {enabled?:unknown}).enabled !== 'boolean') throw Error(); return {enabled:(data as {enabled:boolean}).enabled}; }
-  catch (e) { if ((e as NodeJS.ErrnoException).code==='ENOENT') return {enabled:false}; throw new Error('Не удалось прочитать настройки обработки памяти.'); }
+  catch (e) { if ((e as NodeJS.ErrnoException).code==='ENOENT') return {enabled:true}; throw new Error('Не удалось прочитать настройки обработки памяти.'); }
 }
 export function setAiMemory(enabled: unknown): void {
   if (typeof enabled !== 'boolean') throw new Error('Некорректные настройки памяти.');

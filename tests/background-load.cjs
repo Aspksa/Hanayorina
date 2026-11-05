@@ -1,0 +1,2 @@
+const {test}=require('node:test');const assert=require('node:assert/strict');const {isSystemBusy}=require('../dist/memory/load.js');
+test('background work skips high aggregate CPU usage',()=>{assert.equal(isSystemBusy({idle:100,total:1000},{idle:110,total:1100}),true);assert.equal(isSystemBusy({idle:100,total:1000},{idle:190,total:1100}),false);assert.equal(isSystemBusy({idle:100,total:1000},{idle:100,total:1000}),false)});

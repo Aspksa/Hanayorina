@@ -1,24 +1,26 @@
-import { constants, closeSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { constants, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const allowed = new Set(['.txt','.md','.csv','.json','.ts','.tsx','.js','.py','.html','.css','.yaml','.yml']);
 const ignore = new Set(['node_modules','dist','build','vendor','__pycache__','data','.runtime']);
-function rootPath(): string {
+export function rootPath(): string {
   const configured = process.env.HANAYORINA_WORKSPACE_ROOT;
-  if (!configured || !isAbsolute(configured)) throw new Error('Укажите абсолютный путь к рабочей папке в HANAYORINA_WORKSPACE_ROOT в локальном .env.');
-  const root = realpathSync(configured);
+  if (configured && !isAbsolute(configured)) throw new Error('Путь к рабочей папке должен быть абсолютным.');
+  const fallback = join(process.cwd(),'data','library');
+  if (!configured) { mkdirSync(fallback,{recursive:true,mode:0o700}); if (lstatSync(fallback).isSymbolicLink()) throw new Error('Папка библиотеки не может быть символической ссылкой.'); }
+  const root = realpathSync(configured || fallback);
   if (!lstatSync(root).isDirectory()) throw new Error('Рабочая папка не найдена.');
   return root;
 }
 function components(name: string): string[] {
   const bits = name.split(/[\\/]/);
   if (!name || name.length>500 || isAbsolute(name) || bits.some(x=>!x || x==='.' || x==='..' || x.startsWith('.') || /[<>:"|?*\x00-\x1f]/.test(x) || /[. ]$/.test(x) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(x))) throw new Error('Укажите относительный путь внутри рабочей папки.');
-  if (bits.some(x=>ignore.has(x.toLowerCase()) || /(?:^|[-_.])(secret|password|credential|token|keys?)(?:[-_.]|$)/i.test(x))) throw new Error('Доступ к служебным папкам и файлам с ключами запрещён.');
+  if (bits.some(x=>ignore.has(x.toLowerCase()) || /(?:^|[-_.])(secrets?|passwords?|credentials?|tokens?|keys?)(?:[-_.]|$)/i.test(x))) throw new Error('Доступ к служебным папкам и файлам с ключами запрещён.');
   if (!allowed.has(extname(bits[bits.length-1]).toLowerCase())) throw new Error('Этот тип файла не поддерживается.');
   return bits;
 }
-function target(root: string, name: string, creating: boolean): string {
+export function target(root: string, name: string, creating: boolean): string {
   const parts = components(name); let at = root;
   for (let i=0;i<parts.length;i++) {
     at=join(at,parts[i]); const last=i===parts.length-1;
@@ -31,7 +33,7 @@ function target(root: string, name: string, creating: boolean): string {
   }
   return at;
 }
-function readSafe(root: string, name: string): string {
+export function readSafe(root: string, name: string): string {
   const path=target(root,name,false); const fd=openSync(path,constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
   try { if (fstatSync(fd).size>200_000) throw new Error('Файл слишком большой для чтения в чате.'); const text=readFileSync(fd,'utf8'); if(text.includes('\0')) throw new Error('Файл не является текстовым.'); return text; }
   finally {closeSync(fd)}
@@ -42,7 +44,7 @@ function search(root:string, query:string): string {
   while(pending.length && scanned<200 && results.length<20){
     const next=pending.shift()!;
     for(const entry of readdirSync(next.directory,{withFileTypes:true})){
-      if(entry.name.startsWith('.')||ignore.has(entry.name.toLowerCase())||/(?:^|[-_.])(secret|password|credential|token|keys?)(?:[-_.]|$)/i.test(entry.name)||entry.isSymbolicLink())continue;
+      if(entry.name.startsWith('.')||ignore.has(entry.name.toLowerCase())||/(?:^|[-_.])(secrets?|passwords?|credentials?|tokens?|keys?)(?:[-_.]|$)/i.test(entry.name)||entry.isSymbolicLink())continue;
       const path=join(next.directory,entry.name);
       if(entry.isDirectory()&&next.depth<6){pending.push({directory:path,depth:next.depth+1});continue;}
       if(!entry.isFile()||!allowed.has(extname(entry.name).toLowerCase()))continue;
