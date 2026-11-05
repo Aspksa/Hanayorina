@@ -1,3 +1,4 @@
+import { runWorkspaceCommand } from '../tools/workspace';
 import { Pool, PoolClient } from 'pg';
 import { load as loadKeys, selectKey } from '../settings/keys';
 import { cloudForRequest } from '../settings/cloud';
@@ -92,8 +93,9 @@ class PartialResponse extends Error { constructor(message: string, readonly text
 export async function send(value: unknown, input: unknown, emit: (e: Event) => void, signal: AbortSignal, requestId: unknown): Promise<void> {
   if (typeof input !== 'string' || !input.trim() || input.length > 20000) throw new Error('Сообщение должно содержать от 1 до 20000 символов.');
   if (typeof requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw new Error('Некорректный идентификатор запроса.');
+  const isLocalCommand = /^\/(?:прочитать|найти|создать|проект)(?:\s|$)/i.test(input.trim());
   const primary = loadKeys(); const cloud = cloudForRequest();
-  if ((!primary.endpoint || !primary.model || !primary.keys.length) && (!cloud.enabled || !cloud.secret || !cloud.model)) throw new Error('Настройте адрес, ключ и модель AI STAR или резерв Cloud.ru.');
+  if (!isLocalCommand && (!primary.endpoint || !primary.model || !primary.keys.length) && (!cloud.enabled || !cloud.secret || !cloud.model)) throw new Error('Настройте адрес, ключ и модель AI STAR или резерв Cloud.ru.');
   const connection: PoolClient = await databasePool().connect(); let chat = value == null ? null : id(value); let locked = false; let assistant: string | null = null; let started = false; let inTransaction = false;
   try {
     await connection.query('BEGIN'); inTransaction = true;
@@ -122,6 +124,15 @@ export async function send(value: unknown, input: unknown, emit: (e: Event) => v
     await connection.query('UPDATE conversations SET updated_at=now() WHERE id=$1', [chat]);
     await connection.query('COMMIT'); inTransaction = false; started = true;
     emit({ type: 'chat', id: chat });
+    if (isLocalCommand) {
+      const result = runWorkspaceCommand(input.trim());
+      if (result === null) throw new Error('Не удалось разобрать команду.');
+      await connection.query('BEGIN'); inTransaction = true;
+      await connection.query("UPDATE messages SET content=$1, status='completed' WHERE id=$2", [result, assistant]);
+      await connection.query("UPDATE chat_requests SET status='completed' WHERE request_id=$1", [requestId]);
+      await connection.query('COMMIT'); inTransaction = false;
+      emit({ type:'delta', text:result }); emit({ type:'done' }); return;
+    }
     const rows = await connection.query("SELECT role, content FROM (SELECT id, role, content FROM messages WHERE conversation_id=$1 AND role IN ('user','assistant') AND status='completed' ORDER BY id DESC LIMIT 20) AS recent ORDER BY id", [chat]);
     const history = rows.rows as Message[];
     let memory: string[] = [];

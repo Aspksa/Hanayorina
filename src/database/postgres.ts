@@ -131,6 +131,24 @@ export async function prepareDatabase(): Promise<void> {
         `);
         await client.query("INSERT INTO hanayorina_migrations (version) VALUES ($1)", [3]);
       }
+      const v4 = await client.query("SELECT version FROM hanayorina_migrations WHERE version = $1", [4]);
+      if (v4.rowCount === 0) {
+        await client.query(`
+          ALTER TABLE memory_metadata ADD COLUMN kind text NOT NULL DEFAULT 'fact';
+          ALTER TABLE memory_metadata ADD CONSTRAINT memory_kind_check CHECK (kind IN ('fact','decision','correction'));
+          CREATE TABLE memory_ai_jobs (
+            message_id bigint PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+            conversation_id bigint NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','processing','done','failed','skipped')),
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+          );
+          CREATE INDEX memory_ai_jobs_pending ON memory_ai_jobs(created_at) WHERE status='pending';
+          CREATE TABLE memory_ai_calls (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now());
+          CREATE INDEX memory_ai_calls_recent ON memory_ai_calls(created_at DESC);
+        `);
+        await client.query("INSERT INTO hanayorina_migrations(version) VALUES ($1)", [4]);
+      }
       const vectorAvailable = await client.query("SELECT to_regtype('vector') IS NOT NULL AS available");
       if (vectorAvailable.rows[0].available) {
         await client.query(`CREATE TABLE IF NOT EXISTS memory_embeddings (
