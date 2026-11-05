@@ -81,3 +81,5 @@ export async function testWithBackup(): Promise<{ provider: string; name: string
     catch { throw new Error('Основной сервис и Cloud.ru не прошли проверку. Проверьте подключение и ключи обоих сервисов.'); }
   }
 }
+
+export function cloudForRequest(): { enabled: boolean; secret: string; model: string } { const value = load(); return { enabled: value.enabled, secret: value.secret, model: value.model || '' }; }
