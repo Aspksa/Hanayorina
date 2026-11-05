@@ -1,5 +1,6 @@
 import { Pool, PoolClient } from 'pg';
-import { extractExplicit, topics } from './extract';
+import { containsSensitive, extractExplicit, topics } from './extract';
+import { aiMemorySettings, runAiBatch } from './ai';
 import { embedNextMemory } from './search';
 
 async function processOne(client: PoolClient): Promise<boolean> {
@@ -40,6 +41,7 @@ async function processOne(client: PoolClient): Promise<boolean> {
       }
       await client.query('INSERT INTO memory_evidence(memory_id,message_id,conversation_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [memoryId,row.message_id,row.conversation_id]);
     }
+    if (!fact && aiMemorySettings().enabled && !row.content.trim().startsWith('/') && row.content.trim().length >= 20 && !containsSensitive(row.content)) await client.query('INSERT INTO memory_ai_jobs(message_id,conversation_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [row.message_id,row.conversation_id]);
     await client.query("UPDATE memory_jobs SET status='done',updated_at=now() WHERE message_id=$1", [row.message_id]);
     await client.query('COMMIT'); return true;
   } catch (error) { try { await client.query('ROLLBACK'); if (messageId) await client.query("UPDATE memory_jobs SET attempts=attempts+1, status=CASE WHEN attempts+1>=3 THEN 'failed' ELSE 'pending' END, updated_at=now() WHERE message_id=$1 AND status='pending'", [messageId]); } catch {} throw error; }
@@ -51,6 +53,6 @@ export async function runMemoryBatch(pool: Pool, limit = 5): Promise<void> {
   finally { running = false; }
 }
 export function startMemoryWorker(pool: Pool): void {
-  const tick = () => { void runMemoryBatch(pool).then(() => embedNextMemory(pool)).catch(() => console.error('Фоновая обработка памяти временно недоступна.')); };
+  const tick = () => { void runMemoryBatch(pool).then(() => embedNextMemory(pool)).then(() => runAiBatch(pool)).catch(() => console.error('Фоновая обработка памяти временно недоступна.')); };
   setTimeout(tick, 3000).unref(); setInterval(tick, 15000).unref();
 }
