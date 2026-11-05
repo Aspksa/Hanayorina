@@ -84,6 +84,23 @@ export async function prepareDatabase(): Promise<void> {
         `);
         await client.query("INSERT INTO hanayorina_migrations (version) VALUES ($1)", [1]);
       }
+      const v2 = await client.query("SELECT version FROM hanayorina_migrations WHERE version = $1", [2]);
+      if (v2.rowCount === 0) {
+        await client.query(`
+          ALTER TABLE messages ADD COLUMN status text NOT NULL DEFAULT 'completed';
+          ALTER TABLE messages ADD CONSTRAINT messages_status_check CHECK (status IN ('completed', 'streaming', 'interrupted', 'failed'));
+          CREATE TABLE chat_requests (
+            request_id uuid PRIMARY KEY,
+            conversation_id bigint NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            assistant_message_id bigint NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            status text NOT NULL CHECK (status IN ('streaming', 'completed', 'interrupted', 'failed')),
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+          CREATE INDEX conversations_recent_order ON conversations (updated_at DESC, id DESC);
+          CREATE INDEX messages_streaming_by_chat ON messages (conversation_id) WHERE status = 'streaming';
+        `);
+        await client.query("INSERT INTO hanayorina_migrations (version) VALUES ($1)", [2]);
+      }
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");

@@ -5,11 +5,30 @@ import { cloudForRequest } from '../settings/cloud';
 type Message = { role: 'user' | 'assistant'; content: string };
 type Event = { type: string; [key: string]: unknown };
 let pool: Pool | null = null;
-export function initChat(): void { pool = new Pool({ max: 4, connectionTimeoutMillis: 5000 }); }
+export async function initChat(): Promise<void> {
+  if (pool) return;
+  const next = new Pool({ max: 4, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
+  next.on('error', () => console.error('Соединение с PostgreSQL прервалось.'));
+  const client = await next.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("UPDATE messages SET status='interrupted' WHERE status='streaming' AND pg_try_advisory_xact_lock(conversation_id)");
+    await client.query("UPDATE chat_requests SET status='interrupted' WHERE status='streaming' AND assistant_message_id IN (SELECT id FROM messages WHERE status='interrupted')");
+    await client.query('COMMIT'); pool = next;
+  } catch (error) { try { await client.query('ROLLBACK'); } catch {} client.release(); await next.end(); throw error; }
+  client.release();
+}
 function db(): Pool { if (!pool) throw new Error('Для сохранения чатов настройте и запустите PostgreSQL. См. docs/setup.md.'); return pool; }
 function id(value: unknown): string { if (typeof value !== 'string' || !/^[1-9][0-9]{0,17}$/.test(value)) throw new Error('Неверный идентификатор чата.'); return value; }
-export async function conversations() { return (await db().query('SELECT id::text, title, updated_at FROM conversations ORDER BY updated_at DESC, id DESC LIMIT 200')).rows; }
-export async function messages(value: unknown) { const chat = id(value); const found = await db().query('SELECT id FROM conversations WHERE id=$1', [chat]); if (!found.rowCount) throw new Error('Чат не найден.'); return (await db().query('SELECT id::text, role, content, created_at FROM (SELECT id, role, content, created_at FROM messages WHERE conversation_id=$1 ORDER BY id DESC LIMIT 1000) AS recent ORDER BY id', [chat])).rows; }
+export async function conversations() { return (await db().query('SELECT id::text, title, updated_at FROM conversations ORDER BY conversations.updated_at DESC, conversations.id DESC LIMIT 200')).rows; }
+export async function messages(value: unknown, cursor?: unknown) {
+  const chat = id(value); const before = cursor == null ? null : id(cursor);
+  const found = await db().query('SELECT id FROM conversations WHERE id=$1', [chat]); if (!found.rowCount) throw new Error('Чат не найден.');
+  const result = await db().query('SELECT id::text, role, content, status, created_at FROM messages WHERE conversation_id=$1 AND ($2::bigint IS NULL OR id < $2::bigint) ORDER BY messages.id DESC LIMIT 51', [chat, before]);
+  const hasMore = result.rows.length > 50;
+  const rows = result.rows.slice(0, 50).reverse();
+  return { messages: rows, hasMore, oldest: rows[0]?.id || null };
+}
 
 async function requestProvider(url: string, secret: string, model: string, history: Message[], signal: AbortSignal): Promise<Response> {
   return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${secret}` }, body: JSON.stringify({ model, messages: history, stream: true }), redirect: 'manual', signal });
@@ -39,7 +58,7 @@ async function upstream(history: Message[], signal: AbortSignal): Promise<{ resp
   if (!response.ok || !response.body) { const status = response.status; await response.body?.cancel(); throw new Error(`Cloud.ru вернул HTTP ${status}. Проверьте ключ, баланс и выбранную модель.`); }
   return { response, provider: 'Cloud.ru', model: backup.model };
 }
-async function consume(response: Response, emit: (e: Event) => void): Promise<string> {
+async function consume(response: Response, emit: (e: Event) => void, onText: (text: string) => void): Promise<string> {
   if (!response.body) throw new Error('Пустой ответ сервиса.');
   const reader = response.body.getReader(); const decoder = new TextDecoder(); let pending = '', text = '', done = false;
   try {
@@ -56,7 +75,7 @@ async function consume(response: Response, emit: (e: Event) => void): Promise<st
         let item: { choices?: Array<{ delta?: { content?: unknown }; finish_reason?: unknown }> };
         try { item = JSON.parse(content); } catch { throw new Error('Получен некорректный поток ответа.'); }
         const delta = item.choices?.[0]?.delta?.content;
-        if (typeof delta === 'string' && delta) { text += delta; if (text.length > 1_000_000) throw new Error('Ответ превышает допустимый размер.'); emit({ type: 'delta', text: delta }); }
+        if (typeof delta === 'string' && delta) { text += delta; if (text.length > 1_000_000) throw new Error('Ответ превышает допустимый размер.'); onText(text); emit({ type: 'delta', text: delta }); }
       }
       if (done || part.done) break;
     }
@@ -68,12 +87,23 @@ async function consume(response: Response, emit: (e: Event) => void): Promise<st
   } finally { try { await reader.cancel(); } catch {} }
 }
 class PartialResponse extends Error { constructor(message: string, readonly text: string) { super(message); } }
-export async function send(value: unknown, input: unknown, emit: (e: Event) => void, signal: AbortSignal): Promise<void> {
+export async function send(value: unknown, input: unknown, emit: (e: Event) => void, signal: AbortSignal, requestId: unknown): Promise<void> {
   if (typeof input !== 'string' || !input.trim() || input.length > 20000) throw new Error('Сообщение должно содержать от 1 до 20000 символов.');
+  if (typeof requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw new Error('Некорректный идентификатор запроса.');
   const primary = loadKeys(); const cloud = cloudForRequest();
   if ((!primary.endpoint || !primary.model || !primary.keys.length) && (!cloud.enabled || !cloud.secret || !cloud.model)) throw new Error('Настройте адрес, ключ и модель AI STAR или резерв Cloud.ru.');
-  const connection: PoolClient = await db().connect(); let chat = value == null ? null : id(value); let locked = false;
+  const connection: PoolClient = await db().connect(); let chat = value == null ? null : id(value); let locked = false; let assistant: string | null = null; let started = false; let inTransaction = false;
   try {
+    await connection.query('BEGIN'); inTransaction = true;
+    // Serialise the same request across browser retries and across application instances.
+    await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 78231))', [requestId]);
+    const previous = await connection.query('SELECT conversation_id::text, status FROM chat_requests WHERE request_id=$1', [requestId]);
+    if (previous.rowCount) {
+      const old = previous.rows[0];
+      if (chat && old.conversation_id !== chat) throw new Error('Идентификатор запроса уже использован в другом чате.');
+      await connection.query('COMMIT'); inTransaction = false;
+      emit({ type: 'duplicate', id: old.conversation_id, status: old.status }); return;
+    }
     if (chat) {
       const result = await connection.query('SELECT pg_try_advisory_lock($1::bigint) AS locked', [chat]);
       locked = result.rows[0].locked; if (!locked) throw new Error('В этом чате уже формируется ответ.');
@@ -82,20 +112,56 @@ export async function send(value: unknown, input: unknown, emit: (e: Event) => v
       const created = await connection.query('INSERT INTO conversations(title) VALUES ($1) RETURNING id::text', [input.trim().slice(0, 80)]); chat = created.rows[0].id;
       const result = await connection.query('SELECT pg_try_advisory_lock($1::bigint) AS locked', [chat]); locked = result.rows[0].locked; if (!locked) throw new Error('В этом чате уже формируется ответ.');
     }
-    await connection.query('INSERT INTO messages(conversation_id, role, content) VALUES ($1,$2,$3)', [chat, 'user', input.trim()]);
+    await connection.query('INSERT INTO messages(conversation_id, role, content, status) VALUES ($1,$2,$3,$4)', [chat, 'user', input.trim(), 'completed']);
+    const placeholder = await connection.query('INSERT INTO messages(conversation_id, role, content, status) VALUES ($1,$2,$3,$4) RETURNING id::text', [chat, 'assistant', '', 'streaming']);
+    assistant = placeholder.rows[0].id;
+    await connection.query('INSERT INTO chat_requests(request_id, conversation_id, assistant_message_id, status) VALUES ($1,$2,$3,$4)', [requestId, chat, assistant, 'streaming']);
     await connection.query('UPDATE conversations SET updated_at=now() WHERE id=$1', [chat]);
+    await connection.query('COMMIT'); inTransaction = false; started = true;
     emit({ type: 'chat', id: chat });
-    const rows = await connection.query("SELECT role, content FROM (SELECT id, role, content FROM messages WHERE conversation_id=$1 AND role IN ('user','assistant') ORDER BY id DESC LIMIT 20) AS recent ORDER BY id", [chat]);
-    const result = await upstream(rows.rows as Message[], AbortSignal.any([signal, AbortSignal.timeout(120000)])); emit({ type: 'provider', provider: result.provider, model: result.model });
+    const rows = await connection.query("SELECT role, content FROM (SELECT id, role, content FROM messages WHERE conversation_id=$1 AND role IN ('user','assistant') AND status='completed' ORDER BY id DESC LIMIT 20) AS recent ORDER BY id", [chat]);
+    let text = '', saved = ''; let writeError: unknown; let pending: Promise<void> = Promise.resolve();
+    const abort = new AbortController();
+    const flush = () => {
+      if (text === saved || writeError) return;
+      const snapshot = text;
+      pending = pending.then(async () => {
+        if (writeError || snapshot === saved) return;
+        try { await connection.query("UPDATE messages SET content=$1 WHERE id=$2 AND status='streaming'", [snapshot, assistant]); saved = snapshot; }
+        catch (error) { writeError = error; abort.abort(); }
+      });
+    };
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let state: 'completed' | 'interrupted' | 'failed' = 'failed'; let failure: unknown;
     try {
-      const answer = await consume(result.response, emit);
-      if (!answer) throw new Error('Модель вернула пустой ответ.');
-      await connection.query('INSERT INTO messages(conversation_id, role, content) VALUES ($1,$2,$3)', [chat, 'assistant', answer]);
-      await connection.query('UPDATE conversations SET updated_at=now() WHERE id=$1', [chat]); emit({ type: 'done' });
-    } catch (error) {
-      if (error instanceof PartialResponse && error.text) await connection.query('INSERT INTO messages(conversation_id, role, content) VALUES ($1,$2,$3)', [chat, 'assistant', `${error.text}\n\n[Ответ прерван]`]);
-      throw error;
+      const result = await upstream(rows.rows as Message[], AbortSignal.any([signal, abort.signal, AbortSignal.timeout(120000)]));
+      emit({ type: 'provider', provider: result.provider, model: result.model });
+      timer = setInterval(flush, 1000);
+      await consume(result.response, emit, value => { text = value; });
+      if (!text) throw new Error('Модель вернула пустой ответ.');
+      state = 'completed';
+    } catch (error) { failure = error; state = text ? 'interrupted' : 'failed'; }
+    finally { if (timer) clearInterval(timer); flush(); await pending; }
+    if (writeError) throw new Error('Не удалось сохранить ответ в PostgreSQL. Ранее сохранённая часть останется в базе.');
+    await connection.query('BEGIN'); inTransaction = true;
+    await connection.query('UPDATE messages SET content=$1, status=$2 WHERE id=$3', [text, state, assistant]);
+    await connection.query('UPDATE chat_requests SET status=$1 WHERE request_id=$2', [state, requestId]);
+    await connection.query('UPDATE conversations SET updated_at=now() WHERE id=$1', [chat]);
+    await connection.query('COMMIT'); inTransaction = false;
+    if (failure) throw failure;
+    emit({ type: 'done' });
+  } catch (error) {
+    if (inTransaction) { try { await connection.query('ROLLBACK'); } catch {} inTransaction = false; }
+    if (started && assistant) {
+      // If final persistence failed, leave the last confirmed text intact; startup recovery handles an interrupted connection.
+      try {
+        await connection.query('BEGIN');
+        await connection.query("UPDATE messages SET status=CASE WHEN content='' THEN 'failed' ELSE 'interrupted' END WHERE id=$1 AND status='streaming'", [assistant]);
+        await connection.query("UPDATE chat_requests SET status=(SELECT status FROM messages WHERE id=$1) WHERE request_id=$2 AND status='streaming'", [assistant, requestId]);
+        await connection.query('COMMIT');
+      } catch { try { await connection.query('ROLLBACK'); } catch {} }
     }
+    throw error;
   } finally {
     if (locked && chat) { try { await connection.query('SELECT pg_advisory_unlock($1::bigint)', [chat]); } catch {} }
     connection.release();

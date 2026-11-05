@@ -14,7 +14,7 @@ const csrf = randomBytes(32).toString('hex');
 function json(res: ServerResponse, status: number, value: unknown) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(value)); }
 async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
   let size = 0; const chunks: Buffer[] = [];
-  for await (const chunk of req) { const b = Buffer.from(chunk); size += b.length; if (size > 16384) throw new Error('Слишком большой запрос.'); chunks.push(b); }
+  for await (const chunk of req) { const b = Buffer.from(chunk); size += b.length; if (size > 131072) throw new Error('Слишком большой запрос.'); chunks.push(b); }
   try { const v: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!v || typeof v !== 'object' || Array.isArray(v)) throw Error(); return v as Record<string, unknown>; } catch { throw new Error('Некорректный запрос.'); }
 }
 async function handle(req: IncomingMessage, res: ServerResponse) {
@@ -28,12 +28,12 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   if (req.headers.origin !== `http://${expectedHost}` || req.headers['x-hanayorina-token'] !== csrf || !req.headers['content-type']?.toLowerCase().startsWith('application/json')) return json(res, 403, { error: 'Запрос отклонён.' });
   const data = await body(req);
   if (req.url === '/api/chats') return json(res, 200, { chats: await conversations() });
-  if (req.url === '/api/messages') return json(res, 200, { messages: await messages(data.id) });
+  if (req.url === '/api/messages') return json(res, 200, await messages(data.id, data.before));
   if (req.url === '/api/chat') {
     res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     const controller = new AbortController(); res.on('close', () => { if (!res.writableEnded) controller.abort(); });
     const emit = (event: unknown) => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
-    try { await send(data.id, data.message, emit, controller.signal); } catch (error) { emit({ type: 'error', message: error instanceof Error ? error.message : 'Ошибка чата.' }); }
+    try { await send(data.id, data.message, emit, controller.signal, data.requestId); } catch (error) { emit({ type: 'error', message: error instanceof Error ? error.message : 'Ошибка чата.' }); }
     return res.end();
   }
   if (req.url === '/api/primary/models') return json(res, 200, { models: await listPrimaryModels() });
@@ -53,7 +53,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
 const server = createServer((req, res) => { void handle(req, res).catch((error: unknown) => { if (!res.headersSent) json(res, 400, { error: error instanceof Error ? error.message : 'Ошибка запроса.' }); else res.end(); }); });
 server.on('error', (error: NodeJS.ErrnoException) => { console.error(error.code === 'EADDRINUSE' ? `Порт ${port} занят. Закройте другую программу и повторите запуск.` : error.message); process.exitCode = 1; });
 async function start(): Promise<void> {
-  if (databaseConfigured()) { await prepareDatabase(); initChat(); console.log('PostgreSQL подключён; структура базы готова.'); }
+  if (databaseConfigured()) { await prepareDatabase(); await initChat(); console.log('PostgreSQL подключён; структура базы готова.'); }
   else console.log('PostgreSQL не настроен. См. config/.env.example и docs/setup.md.');
   server.listen(port, host, () => console.log(`Hanayorina: http://${host}:${port}`));
 }
