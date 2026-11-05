@@ -37,7 +37,7 @@ const chat = require(join(base,'chat/chat.js'));
 test('streamed chat stores statuses, avoids duplicate submissions and preserves partial text', async t => {
  const original = global.fetch; const calls=[]; let mode='fallback';
  global.fetch = async (url, options) => {
-  calls.push({url,auth:options.headers.Authorization});
+  calls.push({url,auth:options.headers.Authorization,body:options.body ? JSON.parse(options.body) : null});
   if(url.endsWith('/models'))return new Response(JSON.stringify({data:[{id:url.includes('cloud.ru')?'deepseek-ai/DeepSeek-V4-Pro':'deepseek-test'}]}));
   if(mode==='partial')return new Response('data: {"choices":[{"delta":{"content":"Часть"}}]}\n\n');
   if(url.includes('example.test')) return new Response('{}',{status:401});
@@ -50,6 +50,7 @@ test('streamed chat stores statuses, avoids duplicate submissions and preserves 
  await chat.send(null,'Как дела?',e=>events.push(e),new AbortController().signal,rid);
  const id=events.find(x=>x.type==='chat').id;assert.equal(events.find(x=>x.type==='provider').provider,'Cloud.ru');assert.equal(events.at(-1).type,'done');
  assert.deepEqual(calls.slice(-2).map(x=>x.auth),['Bearer dummy-primary','Bearer dummy-cloud']);
+ for(const call of calls.slice(-2)){assert.equal(call.body.messages[0].role,'system');assert.match(call.body.messages[0].content,/Hanayorina/);assert.match(call.body.messages[0].content,/хозяин/);assert.equal(call.body.messages.at(-1).content,'Как дела?');}
  assert.deepEqual((await chat.messages(id)).messages.map(x=>x.content),['Как дела?','Привет']);
  events=[];const count=calls.length;await chat.send(id,'Как дела?',e=>events.push(e),new AbortController().signal,rid);assert.equal(events[0].type,'duplicate');assert.equal(calls.length,count);
  mode='partial';events=[];await assert.rejects(chat.send(id,'Продолжай',e=>events.push(e),new AbortController().signal,'123e4567-e89b-42d3-a456-426614174112'),/прервался/);
