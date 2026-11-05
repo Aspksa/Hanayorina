@@ -16,3 +16,10 @@ const stop = new Set(['который','которая','которые','про
 export function topics(text: string): string[] {
   return [...new Set((text.toLocaleLowerCase('ru').match(/[a-zа-яё0-9][a-zа-яё0-9._-]{4,}/giu) || []).filter(word => !stop.has(word)).slice(0, 12))];
 }
+
+/** Corrections are explicitly marked by the user and always require review. */
+export function extractCorrection(text: string): Fact | null {
+  const match = text.trim().match(/^(?:поправка|исправление)\s*[:：]\s*([\s\S]+)$/i);
+  if (!match) return null;
+  return extractExplicit('Запомни: ' + match[1]);
+}
