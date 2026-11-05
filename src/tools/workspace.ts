@@ -1,4 +1,4 @@
-import { constants, closeSync, existsSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { constants, closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -6,8 +6,10 @@ const allowed = new Set(['.txt','.md','.csv','.json','.ts','.tsx','.js','.py','.
 const ignore = new Set(['node_modules','dist','build','vendor','__pycache__','data','.runtime']);
 export function rootPath(): string {
   const configured = process.env.HANAYORINA_WORKSPACE_ROOT;
-  if (!configured || !isAbsolute(configured)) throw new Error('Укажите абсолютный путь к рабочей папке в HANAYORINA_WORKSPACE_ROOT в локальном .env.');
-  const root = realpathSync(configured);
+  if (configured && !isAbsolute(configured)) throw new Error('Путь к рабочей папке должен быть абсолютным.');
+  const fallback = join(process.cwd(),'data','library');
+  if (!configured) { mkdirSync(fallback,{recursive:true,mode:0o700}); if (lstatSync(fallback).isSymbolicLink()) throw new Error('Папка библиотеки не может быть символической ссылкой.'); }
+  const root = realpathSync(configured || fallback);
   if (!lstatSync(root).isDirectory()) throw new Error('Рабочая папка не найдена.');
   return root;
 }
